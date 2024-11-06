@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panel de Mensajes</title>
+    <link rel="stylesheet" href="../../assets/css/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+</head>
+<body>
+    <div class="admin-container">
+        <!-- Header -->
+        <header class="admin-header">
+            <h1><i class="fas fa-inbox"></i> Panel de Mensajes</h1>
+            <p>Gestión de mensajes recibidos</p>
+            <button id="logoutBtn" class="logout-btn" onclick="setupLogout()">
+                <i class="fas fa-sign-out-alt"></i> Cerrar Sesión
+            </button>
+        </header>
+
+        <!-- Controles -->
+        <div class="admin-controls">
+            <button id="toggleStats" class="control-btn">
+                <i class="fas fa-chart-bar"></i> Ver Estadísticas
+            </button>
+            <button id="exportAllExcel" class="control-btn">
+                <i class="fas fa-file-excel"></i> Exportar Todos
+            </button>
+        </div>
+
+        <!-- Panel de Estadísticas -->
+        <div id="statsPanel" class="stats-panel" style="display: none;">
+            <div class="stats-grid">
+                <div class="stat-box">
+                    <i class="fas fa-envelope"></i>
+                    <span id="totalMensajes">0</span>
+                    <label>Total Mensajes</label>
+                </div>
+                <div class="stat-box">
+                    <i class="fas fa-calendar-day"></i>
+                    <span id="mensajesHoy">0</span>
+                    <label>Mensajes Hoy</label>
+                </div>
+            </div>
+            <div class="chart-container">
+                <canvas id="mensajesChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Lista de Mensajes -->
+        <div id="listaMensajes" class="mensajes-container">
+            <!-- Los mensajes se cargarán aquí dinámicamente -->
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="../../assets/js/db.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', async function() {
+            try {
+                console.log('Iniciando página de mensajes');
+                await initDB();
+                console.log('Base de datos inicializada');
+                
+                const mensajes = await obtenerMensajes();
+                console.log('Mensajes recuperados:', mensajes);
+                
+                mostrarMensajes(mensajes);
+                setupEventListeners(mensajes);
+                actualizarEstadisticas(mensajes);
+                
+            } catch (error) {
+                console.error('Error en página de mensajes:', error);
+                Swal.fire({
+                    title: 'Error',
+                    text: 'Error al cargar los mensajes: ' + error.message,
+                    icon: 'error'
+                });
+            }
+        });
+
+        function setupEventListeners(mensajes) {
+            // Botón de estadísticas
+            document.getElementById('toggleStats').addEventListener('click', function() {
+                const statsPanel = document.getElementById('statsPanel');
+                const isHidden = statsPanel.style.display === 'none';
+                
+                statsPanel.style.display = isHidden ? 'block' : 'none';
+                this.innerHTML = isHidden ? 
+                    '<i class="fas fa-chart-bar"></i> Ocultar Estadísticas' : 
+                    '<i class="fas fa-chart-bar"></i> Ver Estadísticas';
+                
+                if (isHidden) {
+                    actualizarGrafico(mensajes);
+                }
+            });
+
+            // Botón de exportar
+            document.getElementById('exportAllExcel').addEventListener('click', () => exportarMensajes(mensajes));
+        }
+
+        function actualizarEstadisticas(mensajes) {
+            // Actualizar contadores
+            document.getElementById('totalMensajes').textContent = mensajes.length;
+            
+            // Contar mensajes de hoy
+            const hoy = new Date().toDateString();
+            const mensajesHoy = mensajes.filter(m => 
+                new Date(m.fecha).toDateString() === hoy
+            ).length;
+            document.getElementById('mensajesHoy').textContent = mensajesHoy;
+        }
+
+        function actualizarGrafico(mensajes) {
+            const ctx = document.getElementById('mensajesChart').getContext('2d');
+            
+            // Obtener datos de los últimos 7 días
+            const ultimos7Dias = Array.from({length: 7}, (_, i) => {
+                const d = new Date();
+                d.setDate(d.getDate() - i);
+                return d;
+            }).reverse();
+
+            const datos = ultimos7Dias.map(fecha => {
+                const fechaStr = fecha.toDateString();
+                return mensajes.filter(m => 
+                    new Date(m.fecha).toDateString() === fechaStr
+                ).length;
+            });
+
+            // Destruir gráfico existente si hay uno
+            if (window.mensajesChart instanceof Chart) {
+                window.mensajesChart.destroy();
+            }
+
+            // Crear nuevo gráfico
+            window.mensajesChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: ultimos7Dias.map(d => d.toLocaleDateString()),
+                    datasets: [{
+                        label: 'Mensajes por día',
+                        data: datos,
+                        borderColor: '#2193b0',
+                        backgroundColor: 'rgba(33, 147, 176, 0.1)',
+                        tension: 0.4,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                        },
+                        title: {
+                            display: true,
+                            text: 'Mensajes últimos 7 días'
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                stepSize: 1
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function exportarMensajes(mensajes) {
+            try {
+                if (!mensajes || mensajes.length === 0) {
+                    Swal.fire({
+                        title: 'Sin datos',
+                        text: 'No hay mensajes para exportar',
+                        icon: 'info'
+                    });
+                    return;
+                }
+
+                // Preparar datos para Excel
+                const datosExcel = mensajes.map(mensaje => ({
+                    'Fecha': new Date(mensaje.fecha).toLocaleString(),
+                    'Nombre': mensaje.nombre,
+                    'Email': mensaje.email,
+                    'Teléfono': mensaje.telefono || 'No proporcionado',
+                    'Asunto': mensaje.asunto,
+                    'Mensaje': mensaje.mensaje
+                }));
+
+                // Crear libro de Excel
+                const wb = XLSX.utils.book_new();
+                const ws = XLSX.utils.json_to_sheet(datosExcel);
+
+                // Ajustar anchos de columna
+                const wscols = [
+                    {wch: 20}, // Fecha
+                    {wch: 25}, // Nombre
+                    {wch: 30}, // Email
+                    {wch: 15}, // Teléfono
+                    {wch: 30}, // Asunto
+                    {wch: 50}  // Mensaje
+                ];
+                ws['!cols'] = wscols;
+
+                // Agregar hoja al libro
+                XLSX.utils.book_append_sheet(wb, ws, "Mensajes");
+
+                // Generar archivo
+                XLSX.writeFile(wb, `mensajes_${new Date().toISOString().split('T')[0]}.xlsx`);
+
+                Swal.fire({
+                    title: '¡Exportación exitosa!',
+                    text: 'Los mensajes han sido exportados a Excel',
+                    icon: 'success'
+                });
+
+            } catch (error) {
+                console.error('Error al exportar:', error);
+                Swal.fire({
+                    title: 'Error',
+                    text: 'No se pudieron exportar los mensajes',
+                    icon: 'error'
+                });
+            }
+        }
+
+        function mostrarMensajes(mensajes) {
+            const container = document.getElementById('listaMensajes');
+            if (!container) {
+                console.error('No se encontró el contenedor de mensajes');
+                return;
+            }
+            
+            container.innerHTML = '';
+
+            if (!mensajes || mensajes.length === 0) {
+                container.innerHTML = `
+                    <div class="mensaje-vacio">
+                        <i class="fas fa-inbox"></i>
+                        <p>No hay mensajes recibidos</p>
+                    </div>`;
+                return;
+            }
+
+            mensajes.sort((a, b) => new Date(b.fecha) - new Date(a.fecha))
+                   .forEach(mensaje => {
+                const fecha = new Date(mensaje.fecha).toLocaleString();
+                const mensajeElement = document.createElement('div');
+                mensajeElement.className = 'mensaje-card';
+
+                mensajeElement.innerHTML = `
+                    <div class="mensaje-header">
+                        <h3>${mensaje.asunto}</h3>
+                        <span class="mensaje-fecha">${fecha}</span>
+                    </div>
+                    <div class="mensaje-info">
+                        <p><i class="fas fa-user"></i> ${mensaje.nombre}</p>
+                        <p><i class="fas fa-envelope"></i> ${mensaje.email}</p>
+                        <p><i class="fas fa-phone"></i> ${mensaje.telefono || 'No proporcionado'}</p>
+                    </div>
+                    <div class="mensaje-contenido">
+                        <p>${mensaje.mensaje}</p>
+                    </div>
+                    <div class="mensaje-actions">
+                        <button class="action-btn delete-btn" onclick="eliminarMensaje(${mensaje.id})">
+                            <i class="fas fa-trash"></i> Eliminar
+                        </button>
+                    </div>
+                `;
+                container.appendChild(mensajeElement);
+            });
+        }
+
+        function setupLogout() {
+            Swal.fire({
+                title: '¿Cerrar sesión?',
+                text: "¿Estás seguro que deseas salir?",
+                icon: 'question',
+                showCancelButton: true,
+                confirmButtonColor: '#3085d6',
+                cancelButtonColor: '#d33',
+                confirmButtonText: 'Sí, cerrar sesión',
+                cancelButtonText: 'Cancelar'
+            }).then((result) => {
+                if (result.isConfirmed) {
+                    sessionStorage.removeItem('adminLoggedIn');
+                    window.location.href = 'login.html';
+                }
+            });
+        }
+
+        async function eliminarMensaje(id) {
+            try {
+                const result = await Swal.fire({
+                    title: '¿Estás seguro?',
+                    text: "No podrás revertir esta acción",
+                    icon: 'warning',
+                    showCancelButton: true,
+                    confirmButtonColor: '#dc3545',
+                    cancelButtonColor: '#6c757d',
+                    confirmButtonText: 'Sí, eliminar',
+                    cancelButtonText: 'Cancelar'
+                });
+
+                if (result.isConfirmed) {
+                    await eliminarMensajeDB(id);
+                    const mensajes = await obtenerMensajes();
+                    mostrarMensajes(mensajes);
+                    
+                    Swal.fire(
+                        '¡Eliminado!',
+                        'El mensaje ha sido eliminado.',
+                        'success'
+                    );
+                }
+            } catch (error) {
+                console.error('Error al eliminar:', error);
+                Swal.fire(
+                    'Error',
+                    'No se pudo eliminar el mensaje',
+                    'error'
+                );
+            }
+        }
+    </script>
+</body>
+</html> 
